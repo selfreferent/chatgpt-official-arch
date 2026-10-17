@@ -23,10 +23,10 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Verify checkout and assign workspace
+      - name: Assign workspace and verify checkout
         run: |
-          git rev-parse --is-inside-work-tree
           chown -R builder:builder "$GITHUB_WORKSPACE"
+          runuser -u builder -- git rev-parse --is-inside-work-tree
       - name: Fast validation
         run: runuser -u builder -- scripts/validate.sh
       - name: Determine full validation scope
@@ -39,9 +39,12 @@ jobs:
           import os, subprocess
           full = os.environ['EVENT'] == 'workflow_dispatch'
           base = os.environ['BASE_SHA']
-          if os.environ['EVENT'] == 'pull_request':
-              paths = subprocess.check_output(['runuser','-u','builder','--','git','diff','--name-only',base,'HEAD'],text=True).splitlines()
-              full = any(p in ('PKGBUILD','.SRCINFO','upstream.py','upstream-depends.txt','upstream-layout.json') or p.startswith(('scripts/','tests/','.github/workflows/')) for p in paths)
+          if os.environ['EVENT'] in ('pull_request', 'push'):
+              if not base or set(base) == {'0'}:
+                  full = True  # A new branch has no previous revision to compare.
+              else:
+                  paths = subprocess.check_output(['runuser','-u','builder','--','git','diff','--name-only',base,'HEAD'],text=True).splitlines()
+                  full = any(p in ('PKGBUILD','.SRCINFO','upstream.py','upstream-depends.txt','upstream-layout.json') or p.startswith(('scripts/','tests/','.github/workflows/')) for p in paths)
           print('full='+str(full).lower())
           PY
       - name: Full package validation
