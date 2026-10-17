@@ -19,16 +19,20 @@ jobs:
       changed: ${{ steps.update.outputs.changed }}
       base: ${{ steps.base.outputs.revision }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          persist-credentials: false
       - name: Prepare Arch builder
         run: |
           pacman -Syu --noconfirm --needed python namcap git curl zstd sudo
           useradd --create-home builder
           echo "builder ALL=(root) NOPASSWD: /usr/bin/pacman" > /etc/sudoers.d/builder
           chmod 440 /etc/sudoers.d/builder
+      # Install Git before checkout to require a real repository, not an archive.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Verify checkout and assign workspace
+        run: |
+          git rev-parse --is-inside-work-tree
           chown -R builder:builder "$GITHUB_WORKSPACE"
       - name: Record validated base
         id: base
@@ -76,13 +80,16 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          ref: ${{ needs.validate.outputs.base }}
       - name: Prepare publisher
         run: |
           pacman -Syu --noconfirm --needed python git
           useradd --create-home builder
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.validate.outputs.base }}
+      - name: Verify checkout and assign workspace
+        run: |
+          git rev-parse --is-inside-work-tree
           chown -R builder:builder "$GITHUB_WORKSPACE"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:

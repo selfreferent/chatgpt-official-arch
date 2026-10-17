@@ -9,7 +9,7 @@ driver. The recipe downloads a versioned Debian package and verifies its SHA-256
 Install `base-devel`, `git`, `python`, and `curl`, then build as a regular user:
 
 ```sh
-git clone https://github.com/sudo-deus/chatgpt-official-arch.git
+git clone https://github.com/selfreferent/chatgpt-official-arch.git
 cd chatgpt-official-arch
 makepkg -s
 ```

@@ -54,6 +54,28 @@ Resolve the underlying change in a reviewed maintainer change; do not relax an
 assertion just to make the update pass. If publishing a validated branch succeeds
 but GitHub rejects PR creation, enable the setting above and rerun.
 
+## Troubleshooting update failures
+
+Install Git in the Arch container **before** `actions/checkout` in every job.
+Without Git, checkout falls back to a REST source archive without `.git`.
+Installing Git afterwards does not recreate the repository or history: PR scope
+checks, the updater's base revision check, and publication then fail. Keep the
+post-checkout repository check and assign ownership to the unprivileged builder
+after checkout.
+
+A dependency-drift error is a request to review the upstream change. For example,
+release `26.1013.40934` raised Debian's GLib minimum from `2.39.4` to `2.49.3`.
+The reviewed Arch mapping is `glib2>=2.49.3`; the Debian baseline and its local
+source checksum were updated together. The new release also updated bundled
+Sharp/libvips and optional Python helpers. Their precise namcap findings were
+reviewed against ELF dependencies and source imports before updating the policy.
+Keep these checks strict for future releases.
+
+After a GitHub username change, update the local `origin` URL and repository
+links. Workflows use `github.repository`/the event repository, so their owner is
+resolved automatically. SSH still needs an available, unlocked existing key;
+a missing agent or passphrase prompt is separate from an incorrect remote URL.
+
 ## Local updates and reviewed baselines
 
 ```sh
