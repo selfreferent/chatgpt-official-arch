@@ -63,6 +63,13 @@ checks, the updater's base revision check, and publication then fail. Keep the
 post-checkout repository check and assign ownership to the unprivileged builder
 after checkout.
 
+Scope detection runs full package validation when the event's comparison commit
+is unavailable. A force-push can remove the previous tip from all fetched refs,
+so even a full-history checkout cannot guarantee that `github.event.before`
+exists. New branches, missing history, and manual dispatches therefore take the
+full path; ordinary documentation-only diffs can still use fast checks. Other
+Git failures remain errors rather than silently skipping validation.
+
 A dependency-drift error is a request to review the upstream change. For example,
 release `26.1013.40934` raised Debian's GLib minimum from `2.39.4` to `2.49.3`.
 The reviewed Arch mapping is `glib2>=2.49.3`; the Debian baseline and its local
