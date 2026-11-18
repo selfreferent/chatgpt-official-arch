@@ -54,6 +54,7 @@ jobs:
         if: steps.discover.outputs.outcome != 'requires_review'
         run: |
           pacman -S --noconfirm --needed vulkan-swrast
+          runuser -u builder -- makepkg --syncdeps --noconfirm --verifysource --force
           runuser -u builder -- python scripts/full-validation.py --report report.json
       - name: Prepare metadata-only result and validated handoff
         id: result

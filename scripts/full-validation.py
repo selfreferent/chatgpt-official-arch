@@ -17,7 +17,7 @@ def run(*args, **kwargs):
 
 def validate():
     u.validate_local_sources('PKGBUILD')
-    run('makepkg','--syncdeps','--noconfirm','--verifysource','--force')
+    run('makepkg','--verifysource','--force')
     version=u.assignments(Path('PKGBUILD').read_text())['version'][1]
     # Catch integration review gates before makepkg wraps them in a generic error.
     # Control metadata mismatches and archive safety violations remain hard errors.
