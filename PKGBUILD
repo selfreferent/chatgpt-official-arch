@@ -2,8 +2,8 @@
 # Maintainer: selfreferent
 
 pkgname=chatgpt-official-bin
-pkgver=26.1027.51404
-pkgrel=2
+pkgver=26.1111.71025
+pkgrel=1
 pkgdesc="Official ChatGPT desktop app for Linux, repackaged for Arch/Artix"
 arch=('x86_64')
 url='https://developers.openai.com/codex/app'
@@ -74,13 +74,13 @@ source=(
 )
 sha256sums=(
     '660cf11a067eee1e706bd25c2ea1e84ab090b92de5b30c53db4e0372792f318d'
-    'c1715aed61fa6115eacdc97a1c9eaa2a71bf05d383f5c3b7fcc3808a2ebc36c9'
+    'ed54de42f676120eed6b52fdc0d5aaccdb03fcdf2d26a93dacbf8ff8e956104f'
     '92362e44c8b3bcbfeff1849796965348e7990871add4d56f5e2916c082bbb2bf'
 )
 noextract=("${_deb}")
 
 sha256sums_x86_64=(
-    '46f1e22d028698fe9edaefd5847aece07c4509a30d3709e104220719d8c12822'
+    '8197424cbcea3a7c0d445a544eaa6b99df8b8ef8b1d182e2b743f702753c7a70'
 )
 
 # Preserve OpenAI's prebuilt binaries exactly.

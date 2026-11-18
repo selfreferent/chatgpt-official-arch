@@ -1,7 +1,7 @@
 pkgbase = chatgpt-official-bin
 	pkgdesc = Official ChatGPT desktop app for Linux, repackaged for Arch/Artix
-	pkgver = 26.1027.51404
-	pkgrel = 2
+	pkgver = 26.1111.71025
+	pkgrel = 1
 	url = https://developers.openai.com/codex/app
 	arch = x86_64
 	license = unknown
@@ -45,18 +45,18 @@ pkgbase = chatgpt-official-bin
 	depends = xz
 	optdepends = git: Codex Git/repository workflows
 	optdepends = python: bundled optional helper scripts
-	provides = chatgpt=26.1027.51404
+	provides = chatgpt=26.1111.71025
 	conflicts = chatgpt
-	noextract = chatgpt_26.1027.51404_amd64.deb
+	noextract = chatgpt_26.1111.71025_amd64.deb
 	options = !strip
 	options = !debug
 	source = upstream.py
 	source = upstream-depends.txt
 	source = upstream-layout.json
 	sha256sums = 660cf11a067eee1e706bd25c2ea1e84ab090b92de5b30c53db4e0372792f318d
-	sha256sums = c1715aed61fa6115eacdc97a1c9eaa2a71bf05d383f5c3b7fcc3808a2ebc36c9
+	sha256sums = ed54de42f676120eed6b52fdc0d5aaccdb03fcdf2d26a93dacbf8ff8e956104f
 	sha256sums = 92362e44c8b3bcbfeff1849796965348e7990871add4d56f5e2916c082bbb2bf
-	source_x86_64 = chatgpt_26.1027.51404_amd64.deb::https://persistent.oaistatic.com/codex-app-prod/linux/deb/pool/main/c/chatgpt/chatgpt_26.1027.51404_amd64.deb
-	sha256sums_x86_64 = 46f1e22d028698fe9edaefd5847aece07c4509a30d3709e104220719d8c12822
+	source_x86_64 = chatgpt_26.1111.71025_amd64.deb::https://persistent.oaistatic.com/codex-app-prod/linux/deb/pool/main/c/chatgpt/chatgpt_26.1111.71025_amd64.deb
+	sha256sums_x86_64 = 8197424cbcea3a7c0d445a544eaa6b99df8b8ef8b1d182e2b743f702753c7a70
 
 pkgname = chatgpt-official-bin
