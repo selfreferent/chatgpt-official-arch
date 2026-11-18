@@ -12,6 +12,8 @@ import json
 from pathlib import Path
 import re
 import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from upstream import Invalid
 
 ROOT=Path(__file__).resolve().parent.parent
 
@@ -47,7 +49,7 @@ def reviewed(value,approved):
         return all(a <= b for a,b in zip(arguments,allowed))
     return False
 
-def check(paths,policy_path=ROOT/'tests/fixtures/namcap-reviewed.json'):
+def findings(paths,policy_path=ROOT/'tests/fixtures/namcap-reviewed.json'):
     policy=json.loads(Path(policy_path).read_text())
     approved=set(policy['diagnostics'])
     failed=[]
@@ -57,11 +59,20 @@ def check(paths,policy_path=ROOT/'tests/fixtures/namcap-reviewed.json'):
             if match:
                 severity,diagnostic=match.groups()
                 if not reviewed(severity+': '+canonical(diagnostic),approved):
-                    failed.append(line)
+                    failed.append({'kind':'namcap', 'severity':severity, 'diagnostic':canonical(diagnostic)})
             elif line.strip() and not re.fullmatch(r'.* I: .*',line):
-                failed.append(line)  # tracebacks, parser failures, or changed output format
+                raise Invalid('unparseable namcap output: '+line)
+    # Do not fingerprint package filenames or set-dependent diagnostic ordering.
+    return sorted({json.dumps(f,sort_keys=True):f for f in failed}.values(),key=lambda f:json.dumps(f,sort_keys=True))
+
+def check(paths,policy_path=ROOT/'tests/fixtures/namcap-reviewed.json'):
+    try:
+        failed=findings(paths,policy_path)
+    except (Invalid, ValueError) as exc:
+        print(str(exc),file=sys.stderr)
+        return 1
     if failed:
-        print('Unreviewed namcap findings:\n'+'\n'.join(failed),file=sys.stderr)
+        print('Unreviewed namcap findings:\n'+json.dumps(failed,sort_keys=True),file=sys.stderr)
         return 1
     print('namcap findings match reviewed policy')
     return 0

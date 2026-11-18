@@ -16,7 +16,8 @@ jobs:
     permissions:
       contents: read
     outputs:
-      changed: ${{ steps.update.outputs.changed }}
+      publish: ${{ steps.result.outputs.publish }}
+      validation: ${{ steps.result.outputs.validation }}
       base: ${{ steps.base.outputs.revision }}
     steps:
       - name: Prepare Arch builder
@@ -38,42 +39,87 @@ jobs:
         id: base
         run: |
           printf 'revision=%s\n' "$(runuser -u builder -- git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-      - name: Discover and update
-        id: update
+      - name: Fast tests and recipe consistency
+        run: runuser -u builder -- scripts/validate.sh
+      - name: Discover upstream candidate
+        id: discover
         run: |
-          runuser -u builder -- scripts/validate.sh
-          runuser -u builder -- scripts/update-upstream.sh --json > report.json
-          python - <<'PY' >> "$GITHUB_OUTPUT"
+          runuser -u builder -- scripts/update-upstream.sh --workflow --json > report.json
+          chown builder:builder report.json
+          python - <<'PYTHON' >> "$GITHUB_OUTPUT"
           import json
-          print('changed='+str(json.load(open('report.json'))['updated']).lower())
-          PY
-      - name: Full validation of changed release
-        if: steps.update.outputs.changed == 'true'
+          print('outcome='+json.load(open('report.json'))['outcome'])
+          PYTHON
+      - name: Full validation
+        if: steps.discover.outputs.outcome != 'requires_review'
         run: |
           pacman -S --noconfirm --needed vulkan-swrast
-          runuser -u builder -- makepkg --syncdeps --noconfirm --verifysource --force
-          runuser -u builder -- scripts/validate.sh --full
-      - name: Prepare metadata-only handoff
-        if: steps.update.outputs.changed == 'true'
+          runuser -u builder -- python scripts/full-validation.py --report report.json
+      - name: Prepare metadata-only result and validated handoff
+        id: result
+        env:
+          VALIDATED_BASE: ${{ steps.base.outputs.revision }}
         run: |
           mkdir validated-update
-          runuser -u builder -- git diff --binary -- PKGBUILD .SRCINFO > validated-update/update.patch
-          printf '%s\n' '${{ steps.base.outputs.revision }}' > validated-update/base.txt
-          cp report.json validated-update/report.json
-          cat report.json >> "$GITHUB_STEP_SUMMARY"
+          python - <<'PYTHON' >> "$GITHUB_OUTPUT"
+          import json, os
+          from pathlib import Path
+          report=json.load(open('report.json'))
+          report['base']=os.environ['VALIDATED_BASE']
+          publish=report['outcome']=='candidate' and report['validation']=='validated'
+          Path('validated-update/report.json').write_text(json.dumps(report,sort_keys=True)+'\n')
+          Path('validated-update/base.txt').write_text(report['base']+'\n')
+          print('publish='+str(publish).lower())
+          print('validation='+report['validation'])
+          PYTHON
+          if python -c 'import json,sys; r=json.load(open("report.json")); sys.exit(not (r["outcome"]=="candidate" and r["validation"]=="validated"))'; then
+            runuser -u builder -- git diff --binary -- PKGBUILD .SRCINFO upstream-depends.txt > validated-update/update.patch
+          fi
+      # Keep the default ZIP archive; only tiny metadata crosses jobs.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: steps.update.outputs.changed == 'true'
         with:
-          name: validated-update
+          name: upstream-result
           path: validated-update/
           retention-days: 1
           if-no-files-found: error
       - name: Failure summary
         if: failure()
-        run: echo 'Update failed validation. Review the failing step; the automation branch was not modified.' >> "$GITHUB_STEP_SUMMARY"
-  publish:
+        env:
+          VALIDATED_BASE: ${{ steps.base.outputs.revision }}
+        run: |
+          python - <<'PYTHON' >> "$GITHUB_STEP_SUMMARY"
+          import json, os
+          from pathlib import Path
+          try:
+              report=json.loads(Path('report.json').read_text())
+          except (OSError, ValueError):
+              report={}
+          print('Commit: `'+os.environ['VALIDATED_BASE']+'`')
+          print('Candidate: `'+report.get('version','not discovered')+'`')
+          print('Publication: blocked by validation failure. See the failing stage; no update was published.')
+          PYTHON
+  report:
     needs: validate
-    if: needs.validate.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.validate.outputs.base }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: upstream-result
+          path: validated-update
+      - name: Report review state
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/report-review.py validated-update/report.json >> "$GITHUB_STEP_SUMMARY"
+  publish:
+    needs: [validate, report]
+    if: needs.validate.outputs.publish == 'true' && needs.validate.outputs.validation == 'validated'
     runs-on: ubuntu-latest
     container: archlinux:base-devel
     permissions:
@@ -93,10 +139,12 @@ jobs:
           runuser -u builder -- git rev-parse --is-inside-work-tree
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: validated-update
+          name: upstream-result
           path: validated-update
+      - name: Verify builder credential access
+        run: runuser -u builder -- python scripts/check-credentials.py present
       - name: Publish validated metadata PR
         env:
           GITHUB_TOKEN: ${{ github.token }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: runuser -u builder -- python scripts/publish-update.py
+        run: runuser -u builder -- python scripts/publish-update.py >> "$GITHUB_STEP_SUMMARY"

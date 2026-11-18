@@ -18,12 +18,14 @@ class PublisherTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as work:
             work=Path(work)
             pkg=work/'PKGBUILD';pkg.write_text(recipe())
+            (work/'upstream-depends.txt').write_bytes((ROOT/'upstream-depends.txt').read_bytes())
             (work/'.SRCINFO').write_text(subprocess.check_output(['makepkg','--printsrcinfo'],cwd=work,text=True))
             handoff=work/'validated-update';handoff.mkdir()
             index=work/'Packages'
             depends=(ROOT/'upstream-depends.txt').read_text().strip()
             index.write_text(stanza('1.2.4',Depends=depends))
             report=u.discover(pkg,index)
+            report.update(validation='validated',outcome='candidate')
             (handoff/'report.json').write_text(json.dumps(report))
             base='a'*40
             (handoff/'base.txt').write_text(base)

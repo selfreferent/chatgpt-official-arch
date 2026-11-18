@@ -27,6 +27,8 @@ jobs:
         run: |
           chown -R builder:builder "$GITHUB_WORKSPACE"
           runuser -u builder -- git rev-parse --is-inside-work-tree
+      - name: Verify read-only builder credential boundary
+        run: runuser -u builder -- python scripts/check-credentials.py absent
       - name: Fast validation
         run: runuser -u builder -- scripts/validate.sh
       - name: Determine full validation scope
@@ -41,3 +43,51 @@ jobs:
           pacman -S --noconfirm --needed vulkan-swrast
           runuser -u builder -- makepkg --syncdeps --noconfirm --verifysource --force
           runuser -u builder -- scripts/validate.sh --full
+  handoff-upload:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - name: Prepare credential smoke test
+        run: |
+          pacman -Syu --noconfirm --needed python git
+          useradd --create-home builder
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Verify persisted credentials under builder
+        run: |
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          runuser -u builder -- python scripts/check-credentials.py present
+      - name: Make tiny metadata fixture
+        run: |
+          mkdir smoke
+          printf '%s\n' '{"fixture":"metadata-only","version":1}' > smoke/report.json
+          printf '%s\n' 'Tiny metadata handoff' > smoke/update.patch
+          sha256sum smoke/* > smoke.sha256
+          mv smoke.sha256 smoke/checksums.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: handoff-smoke
+          path: smoke/
+          retention-days: 1
+          if-no-files-found: error
+  handoff-download:
+    needs: handoff-upload
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - name: Prepare fixture consumer
+        run: |
+          pacman -Syu --noconfirm --needed python git
+          useradd --create-home builder
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: handoff-smoke
+          path: smoke
+      - name: Verify metadata fixture survived ZIP handoff
+        run: |
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          runuser -u builder -- python scripts/check-credentials.py absent
+          runuser -u builder -- sha256sum --check smoke/checksums.txt
+          test "$(find smoke -type f | wc -l)" -eq 3

@@ -27,6 +27,8 @@ def api(method,path,body=None):
 
 def main():
     report=json.loads(Path('validated-update/report.json').read_text())
+    u.require(report.get('validation')=='validated' and report.get('outcome')=='candidate',
+              'handoff did not pass full validation')
     base=Path('validated-update/base.txt').read_text().strip()
     branch=os.environ['DEFAULT_BRANCH']
     u.require(len(base)==40 and all(c in '0123456789abcdef' for c in base),'invalid validated base revision')
@@ -40,18 +42,23 @@ def main():
         work=Path(work)
         index=work/'Packages'; index.write_text(stanza)
         recipe=work/'PKGBUILD'; recipe.write_bytes(Path('PKGBUILD').read_bytes())
-        derived=u.discover(recipe,index)
-        u.require(derived['status']=='outdated','validated update is no longer an update')
+        baseline=work/'upstream-depends.txt'
+        baseline.write_bytes(Path('upstream-depends.txt').read_bytes())
+        derived=u.discover(recipe,index,baseline,workflow=True)
+        u.require(derived['outcome']=='candidate','validated update is no longer an eligible update')
         u.update(recipe,derived)
-        expected={name:(work/name).read_bytes() for name in ('PKGBUILD','.SRCINFO')}
+        names=['PKGBUILD','.SRCINFO']
+        if derived['dependency_changes']:
+            names.append('upstream-depends.txt')
+        expected={name:(work/name).read_bytes() for name in names}
     owner=os.environ['GITHUB_REPOSITORY'].split('/')[0]
     query=urllib.parse.urlencode({'state':'open','head':owner+':'+BRANCH,'per_page':100})
     pulls=api('GET','/pulls?'+query)
     u.require(len(pulls)<=1,'multiple open automation PRs; resolve manually')
-    original_modes={name:stat.S_IMODE(Path(name).stat().st_mode) for name in ('PKGBUILD','.SRCINFO')}
+    original_modes={name:stat.S_IMODE(Path(name).stat().st_mode) for name in names}
     patch=Path('validated-update/update.patch')
     changed=subprocess.check_output(['git','apply','--numstat',str(patch)],text=True)
-    u.require(sorted(line.split('\t')[2] for line in changed.splitlines())==['.SRCINFO','PKGBUILD'],
+    u.require(sorted(line.split('\t')[2] for line in changed.splitlines())==sorted(names),
               'patch contains unexpected paths')
     subprocess.run(['git','apply','--check',str(patch)],check=True)
     subprocess.run(['git','apply',str(patch)],check=True)
@@ -63,7 +70,7 @@ def main():
     subprocess.run(['git','switch','-C',BRANCH],check=True)
     subprocess.run(['git','config','user.name','github-actions[bot]'],check=True)
     subprocess.run(['git','config','user.email','41898282+github-actions[bot]@users.noreply.github.com'],check=True)
-    subprocess.run(['git','add','--','PKGBUILD','.SRCINFO'],check=True)
+    subprocess.run(['git','add','--',*names],check=True)
     subprocess.run(['git','commit','-m','Update ChatGPT desktop to '+derived['version']],check=True)
     # Check immediately before publication as well as before generating the commit.
     u.require(git('ls-remote','origin','refs/heads/'+branch).split()[0]==base,
@@ -74,16 +81,19 @@ def main():
                     'origin','HEAD:refs/heads/'+BRANCH],check=True)
     body=(f"Update the official desktop package from `{derived['packaged_version']}` to `{derived['version']}`.\n\n"
           f"- Filename: `{derived['filename']}`\n- Previous SHA-256: `{derived['packaged_sha256']}`\n"
-          f"- SHA-256: `{derived['sha256']}`\n- Debian dependencies and desktop integration match reviewed baselines.\n"
+          f"- SHA-256: `{derived['sha256']}`\n- Desktop integration matches the reviewed baseline.\n"
           '- Validation: fixture tests, SRCINFO, source verification, Arch build, archive checks, and reviewed namcap diagnostics.\n'
           '- Application binaries are preserved. No package artifacts are retained.\n\nHuman review and merge required.\n')
+    if derived['dependency_changes']:
+        body+='\nCompatible Debian minimum relaxations (Arch dependencies unchanged):\n\n'+json.dumps(derived['dependency_changes'],indent=2)+'\n'
     if derived['checksum_replaced']:
         body='**Upstream replaced the artifact for the same version. Review the checksum change; pkgrel was incremented.**\n\n'+body
     payload={'title':'Update ChatGPT desktop to '+derived['version'],'body':body,'base':branch}
     if pulls:
-        api('PATCH','/pulls/'+str(pulls[0]['number']),payload)
+        result=api('PATCH','/pulls/'+str(pulls[0]['number']),payload)
     else:
-        api('POST','/pulls',dict(payload,head=BRANCH))
+        result=api('POST','/pulls',dict(payload,head=BRANCH))
+    print('Publication: validated release PR '+result.get('html_url','created/refreshed')+'; human merge required.')
 
 if __name__=='__main__':
     main()
