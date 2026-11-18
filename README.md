@@ -24,7 +24,9 @@ sudo pacman -U "$(makepkg --packagelist)"
 
 A daily GitHub workflow validates changed upstream releases and creates or
 refreshes one update PR. A maintainer reviews and merges it. Dependency or
-integration changes stop automation for manual review.
+integration changes request manual review through one repository issue. The
+workflow can propose strictly lowered numeric Debian minimums on single providers
+after full validation; it never changes Arch dependencies or merges automatically.
 
 Check upstream locally:
 

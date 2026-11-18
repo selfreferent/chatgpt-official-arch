@@ -22,8 +22,20 @@ No workflow retains or publishes application binaries.
 ## Automated updates
 
 The daily and manually dispatched upstream workflow starts from the default
-branch and queries OpenAI's Debian index. It changes only `pkgver`, `pkgrel`, the
-amd64 checksum, and generated `.SRCINFO`. The fixed branch
+branch and queries OpenAI's Debian index. Normal local commands remain strict.
+The explicit workflow mode reports `no_change`, `candidate`, or `requires_review`.
+It can change `pkgver`, `pkgrel`, the amd64 checksum, and generated `.SRCINFO`.
+Only strictly lowered `>=` minima with plain dotted numeric thresholds on unique,
+unqualified, single providers can also update `upstream-depends.txt` and its
+recipe checksum. Names, alternatives, operators, and other constraints must stay
+identical. Epochs, revisions, repeated providers, stronger bounds, and unfamiliar
+constraints require review. Arch dependency arrays are never changed automatically.
+
+Fast tests, discovery, and full validation are separate stages. Source checksums,
+actual Debian control metadata, archive safety, build, application byte comparison,
+and strict namcap checks must all pass before the result becomes `validated`.
+Current releases are also fully checked so resolution of a prior review gate is
+verified. The fixed branch
 `automation/chatgpt-upstream` and its open PR are refreshed only after full
 validation. Concurrent runs are serialized. A changed default-branch revision
 aborts publication; rerun the workflow.
@@ -35,7 +47,10 @@ replacements carefully. Older upstream releases and ambiguous metadata fail.
 Validation uses a read-only token. Publication has only `contents: write` and
 `pull-requests: write`; its metadata patch is independently reproduced before
 publication. The short-lived Actions handoff contains only recipe metadata and
-validation reporting. No PAT is required.
+validation reporting, plus the baseline only for an independently reproduced
+compatible relaxation. Real-Git tests exercise a local bare remote, and hosted
+smoke jobs check ZIP upload/download and builder access to persisted checkout
+credentials without printing them. No PAT is required.
 
 Under **Settings → Actions → General → Workflow permissions**, enable
 **Allow GitHub Actions to create and approve pull requests**. The workflows do
@@ -48,8 +63,17 @@ push/PR workflows. Required checks therefore run inside the updater before the
 PR is created. Independent push/PR checks remain enabled; manually dispatch full
 validation if required by branch protection or after human edits.
 
-Dependency, layout, or validation failures appear in the failed workflow step
-and summary. The prior automation branch remains intact when validation fails.
+Well-formed dependency drift, changed integration declarations, and unreviewed
+namcap diagnostics block publication and create or update one review issue marked
+`<!-- chatgpt-upstream-review:v1 -->`. A separate job has `issues: write`;
+validation remains read-only. The fingerprint excludes run IDs and timestamps:
+unchanged findings cause no issue edits or comments. Changed candidates/findings
+update the issue; a fully validated result closes it. Expected review gates are
+successful review-required runs. A reporting failure remains a visible failure.
+
+Checksum mismatches, malformed metadata, unsafe archives, missing required files,
+failed builds, tool crashes, and authentication failures still fail the workflow.
+The prior automation branch remains intact when validation is blocked or fails.
 Resolve the underlying change in a reviewed maintainer change; do not relax an
 assertion just to make the update pass. If publishing a validated branch succeeds
 but GitHub rejects PR creation, enable the setting above and rerun.
@@ -83,7 +107,7 @@ and deduplicated its dependency list. The existing Arch/Artix `glib2` dependency
 already supplies `gio`, `gsettings`, `gdbus`, and `glib-compile-schemas`; the
 reviewed baseline and its source checksum were updated with the release.
 New LaTeX preview and optional dictation helpers were reviewed before adding
-their exact Python findings to the namcap policy. Future drift still fails.
+their exact Python findings to the namcap policy. Future unfamiliar drift still requires review.
 
 After a GitHub username change, update the local `origin` URL and repository
 links. Workflows use `github.repository`/the event repository, so their owner is
@@ -105,15 +129,18 @@ version. Never hand-edit `.SRCINFO`.
 `upstream-depends.txt` records reviewed Debian `Depends`. Whitespace,
 continuation lines, comma-separated clause order, and exact duplicate clauses
 are normalized. Alternative order and every version constraint are preserved:
-new/removed requirements, changed alternatives, and changed bounds still fail.
+new/removed requirements, changed alternatives, and changed bounds still fail
+in ordinary local use.
 The index and downloaded control metadata must both match. The
-updater cannot modify this baseline or the Arch dependency array.
+ordinary local updater cannot modify this baseline. Only the workflow relaxation
+case described above can propose a baseline change; Arch arrays always stay fixed.
 
 The Arch mapping uses `glibc` for libc6; `gtk3`, `glib2`, `at-spi2-core`, and
 `gdk-pixbuf2` for GTK/GLib/accessibility requirements; `libxcb` for libxcb1 and
 libxcb-dri3-0; and `libx11` for libx11-6 and libx11-xcb1. `mesa` supplies GBM,
 `libglvnd` supplies libGL, and `vulkan-driver` plus `vulkan-icd-loader` covers
-Vulkan. `openssl` covers libssl3 and `tpm2-tss` covers libtss2-*.
+Vulkan. `libcrypto.so=3-64` and `libssl.so=3-64` cover Debian libssl3; they select
+ABI 3 even after Arch's `openssl` moves to ABI 4. `tpm2-tss` covers libtss2-*.
 The launcher may load libraries dynamically, so namcap alone cannot establish
 that a declared dependency is unused. Optional Qt shim warnings and proprietary
 runtime components must be reviewed against the actual packaged ELF files.

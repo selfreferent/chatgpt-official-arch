@@ -3,7 +3,7 @@
 
 pkgname=chatgpt-official-bin
 pkgver=26.1027.51404
-pkgrel=1
+pkgrel=2
 pkgdesc="Official ChatGPT desktop app for Linux, repackaged for Arch/Artix"
 arch=('x86_64')
 url='https://developers.openai.com/codex/app'
@@ -42,7 +42,8 @@ depends=(
     'libxrandr'
     'mesa'              # Debian libgbm1
     'nspr'
-    'openssl'           # Debian libssl3
+    'libcrypto.so=3-64'  # Debian libssl3; retain ABI 3 across OpenSSL upgrades
+    'libssl.so=3-64'
     'nss'
     'pango'
     'tpm2-tss'          # Debian libtss2-*
@@ -72,9 +73,9 @@ source=(
     'upstream-layout.json'
 )
 sha256sums=(
-    'bb8a801ee52715fb158590b26a365f5e214129da7c6fa85095816fbf898ef4a6'
+    '660cf11a067eee1e706bd25c2ea1e84ab090b92de5b30c53db4e0372792f318d'
     'c1715aed61fa6115eacdc97a1c9eaa2a71bf05d383f5c3b7fcc3808a2ebc36c9'
-    '956e33c31ead6961bf564ea9043acc79c4502d21046a626a8ea62f58d91fda1e'
+    '92362e44c8b3bcbfeff1849796965348e7990871add4d56f5e2916c082bbb2bf'
 )
 noextract=("${_deb}")
 

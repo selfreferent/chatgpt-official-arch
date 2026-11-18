@@ -3,6 +3,7 @@
 """Strict upstream metadata, update, and archive validation; standard library only."""
 import argparse
 import contextlib
+import configparser
 import difflib
 import hashlib
 import json
@@ -22,6 +23,12 @@ SHA = re.compile(r'[0-9a-f]{64}\Z')
 
 class Invalid(ValueError):
     pass
+
+class ReviewRequired(Invalid):
+    """Well-formed declarations which require a maintainer's policy decision."""
+    def __init__(self, findings):
+        self.findings = findings
+        super().__init__(json.dumps(findings, sort_keys=True))
 
 def require(ok, message):
     if not ok:
@@ -76,6 +83,37 @@ def check_depends(actual, expected):
         difflib.unified_diff([expected+'\n'], [actual+'\n'], fromfile='reviewed Depends', tofile='upstream Depends')))
     return actual
 
+def dependency_changes(actual, expected):
+    """Accept only strictly lowered numeric minima on unique single providers."""
+    actual, expected = normalize_depends(actual), normalize_depends(expected)
+    old, new = set(expected.split(', ')), set(actual.split(', '))
+    removed, added = sorted(old-new), sorted(new-old)
+    if not removed and not added:
+        return [], True
+    changes = [{'kind':'dependencies', 'removed':removed, 'added':added}]
+    def providers(clause):
+        return [alt.split(' ', 1)[0].split(':', 1)[0] for alt in clause.split(' | ')]
+    old_names = [name for clause in old for name in providers(clause)]
+    new_names = [name for clause in new for name in providers(clause)]
+    if sorted(old_names) != sorted(new_names) or len(removed) != len(added):
+        return changes, False
+    remaining = set(added)
+    for clause in removed:
+        match = re.fullmatch(r'([a-z0-9][a-z0-9+.-]*) \(>= ([0-9]+(?:\.[0-9]+)+)\)', clause)
+        if not match:
+            return changes, False
+        name, threshold = match.groups()
+        if old_names.count(name) != 1 or new_names.count(name) != 1:
+            return changes, False
+        matches = [c for c in remaining if c.startswith(name+' (>= ')]
+        if len(matches) != 1:
+            return changes, False
+        lowered = re.fullmatch(re.escape(name)+r' \(>= ([0-9]+(?:\.[0-9]+)+)\)', matches[0])
+        if not lowered or version_key(lowered[1]) >= version_key(threshold):
+            return changes, False
+        remaining.remove(matches[0])
+    return changes, not remaining
+
 def select(text):
     found, numeric, signatures = {}, {}, {}
     for fields in control(text):
@@ -125,7 +163,7 @@ def validate_local_sources(pkgbuild):
         require(hashlib.sha256((path.parent/name).read_bytes()).hexdigest()==digest,
                 f'local source checksum mismatch: {name}; review edits and refresh checksums')
 
-def discover(pkgbuild, index_file=None, depends_file=None):
+def discover(pkgbuild, index_file=None, depends_file=None, workflow=False):
     if index_file:
         text = Path(index_file).read_text()
     else:
@@ -133,27 +171,47 @@ def discover(pkgbuild, index_file=None, depends_file=None):
             '--proto', '=https', '--proto-redir', '=https', '--tlsv1.2', '--max-time', '120', INDEX], text=True)
     upstream = select(text)
     expected = Path(depends_file or ROOT/'upstream-depends.txt').read_text()
-    check_depends(upstream['depends'], expected)
+    changes, compatible = dependency_changes(upstream['depends'], expected)
+    if not workflow:
+        check_depends(upstream['depends'], expected)
     local = assignments(Path(pkgbuild).read_text())
     ver, sha = local['version'][1], local['sha256'][1]
     require(version_key(upstream['version']) >= version_key(ver), 'refusing upstream downgrade')
     require(version_key(upstream['version']) != version_key(ver) or upstream['version'] == ver,
             'ambiguous upstream/local equivalent versions')
     status = 'current' if ver == upstream['version'] and sha == upstream['sha256'] else 'outdated'
-    return dict(upstream, status=status, packaged_version=ver, packaged_sha256=sha,
-                checksum_replaced=ver == upstream['version'] and sha != upstream['sha256'])
+    result = dict(upstream, status=status, packaged_version=ver, packaged_sha256=sha,
+                  checksum_replaced=ver == upstream['version'] and sha != upstream['sha256'])
+    if workflow:
+        result.update(outcome=('requires_review' if not compatible else
+                               'candidate' if status=='outdated' or changes else 'no_change'),
+                      dependency_changes=changes, findings=changes if not compatible else [],
+                      validation='pending' if compatible else 'blocked')
+    return result
 
 def update(pkgbuild, upstream):
     path = Path(pkgbuild)
     text = path.read_text()
     fields = assignments(text)
-    if upstream['status'] == 'current':
+    changes = upstream.get('dependency_changes', [])
+    if upstream.get('outcome') == 'requires_review':
         return False
-    release = int(fields['release'][1]) + 1 if upstream['checksum_replaced'] else 1
+    if upstream['status'] == 'current' and not changes:
+        return False
+    release = int(fields['release'][1]) + 1 if upstream['version']==fields['version'][1] else 1
     replacements = {'version': upstream['version'], 'release': str(release), 'sha256': upstream['sha256']}
     changed = text
     for key, match in sorted(fields.items(), key=lambda item: item[1].start(1), reverse=True):
         changed = changed[:match.start(1)] + replacements[key] + changed[match.end(1):]
+    baseline = path.parent/'upstream-depends.txt'
+    if changes:
+        findings, compatible = dependency_changes(upstream['depends'], baseline.read_text())
+        require(compatible and findings == changes, 'dependency relaxation was not independently reproduced')
+        old_hash = hashlib.sha256(baseline.read_bytes()).hexdigest()
+        new_baseline = normalize_depends(upstream['depends'])+'\n'
+        new_hash = hashlib.sha256(new_baseline.encode()).hexdigest()
+        require(changed.count("'"+old_hash+"'")==1, 'missing unique dependency baseline checksum')
+        changed = changed.replace("'"+old_hash+"'", "'"+new_hash+"'")
     # Generate from a temporary recipe first; failures leave the working pair untouched.
     with tempfile.TemporaryDirectory(dir=path.parent, prefix='.updater-') as work:
         staged = Path(work)/'PKGBUILD'
@@ -163,6 +221,8 @@ def update(pkgbuild, upstream):
         require(bool(srcinfo.strip()), 'empty generated .SRCINFO')
     path.write_text(changed)
     (path.parent/'.SRCINFO').write_text(srcinfo)
+    if changes:
+        baseline.write_text(new_baseline)
     return True
 
 def safe_name(name):
@@ -221,6 +281,7 @@ def read_member(archive, member):
     return archive.extractfile(member).read().decode('utf-8')
 
 def payload_checks(archive, members, layout, package=False):
+    findings = []
     prefix = 'usr/lib/chatgpt/'
     for path in layout['required_app_files']:
         name = prefix + path
@@ -228,18 +289,27 @@ def payload_checks(archive, members, layout, package=False):
     for name in (prefix+'ChatGPT', prefix+'codex-launcher'):
         require(members[name].mode & 0o111, f'non-executable launcher: {name}')
     launcher = members.get('usr/bin/chatgpt')
-    require(launcher is not None and launcher.issym() and launcher.linkname == '../lib/chatgpt/codex-launcher',
-            'launcher symlink changed')
+    require(launcher is not None and launcher.issym(), 'missing/invalid launcher symlink')
+    if launcher.linkname != '../lib/chatgpt/codex-launcher':
+        findings.append({'kind':'launcher', 'expected':'../lib/chatgpt/codex-launcher', 'actual':launcher.linkname})
     desktop = members.get('usr/share/applications/chatgpt.desktop')
     require(desktop is not None, 'missing desktop entry')
-    values = {}
-    for line in read_member(archive, desktop).splitlines():
-        if '=' in line:
-            key, value = line.split('=', 1)
-            require(key not in values, f'duplicate desktop field: {key}')
-            values[key] = value
-    for key, expected in layout['desktop'].items():
-        require(values.get(key) == expected, f'desktop {key} changed: {values.get(key)!r}')
+    declarations=configparser.ConfigParser(interpolation=None)
+    declarations.optionxform=str
+    try:
+        declarations.read_string(read_member(archive, desktop))
+    except configparser.Error as exc:
+        raise Invalid(f'malformed desktop entry: {exc}') from exc
+    require('Desktop Entry' in declarations, 'missing Desktop Entry section')
+    require(not declarations.defaults(), 'unexpected desktop defaults')
+    values=dict(declarations['Desktop Entry'])
+    for key in sorted(set(values) | set(layout['desktop'])):
+        expected=layout['desktop'].get(key)
+        if values.get(key) != expected:
+            findings.append({'kind':'desktop', 'field':key, 'expected':expected, 'actual':values.get(key)})
+    for section in declarations.sections():
+        if section != 'Desktop Entry':
+            findings.append({'kind':'desktop_section', 'section':section, 'actual':dict(declarations[section])})
     external = {name: 'symlink' if m.issym() else 'file' for name, m in members.items()
                 if not m.isdir() and not name.startswith(prefix)}
     if package:
@@ -261,11 +331,16 @@ def payload_checks(archive, members, layout, package=False):
         allowed_dirs = {'.','usr/lib','usr/lib/chatgpt'}
         for name in expected:
             allowed_dirs.update(str(p) for p in PurePosixPath(name).parents)
-        require(all(not m.isdir() or name in allowed_dirs or name.startswith(prefix)
-                    for name,m in members.items()), 'unexpected upstream directories: ' + ', '.join(name for name,m in members.items() if m.isdir() and name not in allowed_dirs and not name.startswith(prefix)))
-    require(external == expected, 'upstream/package integration layout drift:\n' +
-            json.dumps({'expected':expected,'actual':external}, indent=2))
+        directories = sorted(name for name,m in members.items() if m.isdir() and name not in allowed_dirs and not name.startswith(prefix))
+        if directories:
+            findings.append({'kind':'integration_directories', 'added':directories})
+    for name in ('usr/share/pixmaps/chatgpt.png', notices):
+        require(name in members and members[name].isfile(), f'missing required integration file: {name}')
+    if external != expected:
+        findings.append({'kind':'integration_layout', 'expected':expected, 'actual':external})
     require('Electron contributors' in read_member(archive, members[notices]), 'third-party notices changed/missing')
+    if findings:
+        raise ReviewRequired(findings)
 
 def compare_application(archive, members, tree):
     prefix='usr/lib/chatgpt/'
@@ -329,7 +404,7 @@ def unpack_deb(deb, work):
         result.append(matches[0])
     return result
 
-def validate_deb(deb, version, depends, layout, destination):
+def validate_deb(deb, version, depends, layout, destination=None):
     with tempfile.TemporaryDirectory(prefix='chatgpt-deb-') as work:
         control_path, data_path = unpack_deb(deb, work)
         with open_tar(control_path) as archive:
@@ -344,6 +419,8 @@ def validate_deb(deb, version, depends, layout, destination):
         with open_tar(data_path) as archive:
             members=inspect_tar(archive)
             payload_checks(archive, members, json.loads(Path(layout).read_text()))
+            if destination is None:
+                return
             dest=Path(destination)
             require(not dest.exists(), 'extraction destination must not exist')
             dest.mkdir(parents=True)
@@ -361,6 +438,7 @@ def main():
         cmd.add_argument('--index-file',default=os.environ.get('CHATGPT_PACKAGES_FILE'))
         cmd.add_argument('--depends-file',default=str(ROOT/'upstream-depends.txt'))
         cmd.add_argument('--json',action='store_true')
+        cmd.add_argument('--workflow',action='store_true',help='structured conservative automation; ordinary CLI stays strict')
     deb=sub.add_parser('deb')
     deb.add_argument('archive'); deb.add_argument('version'); deb.add_argument('depends'); deb.add_argument('layout'); deb.add_argument('destination')
     pkg=sub.add_parser('package')
@@ -371,7 +449,7 @@ def main():
             validate_local_sources(args.pkgbuild)
             return 0
         if args.command in ('check','update'):
-            result=discover(args.pkgbuild,args.index_file,args.depends_file)
+            result=discover(args.pkgbuild,args.index_file,args.depends_file,workflow=args.workflow)
             if args.command=='update':
                 result['updated']=update(args.pkgbuild,result)
             if args.json:
@@ -380,7 +458,7 @@ def main():
                 for key in ('status','packaged_version','version','filename','sha256'):
                     label='upstream_'+key if key in ('version','filename','sha256') else key
                     print(f'{label}={result[key]}')
-            return 10 if args.command=='check' and result['status']=='outdated' else 0
+            return 10 if not args.workflow and args.command=='check' and result['status']=='outdated' else 0
         if args.command=='deb':
             validate_deb(args.archive,args.version,args.depends,args.layout,args.destination)
         else:

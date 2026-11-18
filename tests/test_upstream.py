@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: 0BSD
 import importlib.util
+import contextlib
 import io
 import json
 from pathlib import Path
@@ -272,9 +273,13 @@ class NamcapPolicyTests(unittest.TestCase):
             log.write_text('chatgpt-official-bin E: unknown-spdx-license-identifier unknown\n')
             self.assertEqual(self.lint.check([log]),0)
             log.write_text('chatgpt-official-bin E: missing-required-library NEW\n')
-            self.assertEqual(self.lint.check([log]),1)
+            with contextlib.redirect_stderr(io.StringIO()) as diagnostics:
+                self.assertEqual(self.lint.check([log]),1)
+            self.assertIn('missing-required-library NEW',diagnostics.getvalue())
             log.write_text('Traceback: namcap failed\n')
-            self.assertEqual(self.lint.check([log]),1)
+            with contextlib.redirect_stderr(io.StringIO()) as diagnostics:
+                self.assertEqual(self.lint.check([log]),1)
+            self.assertIn('unparseable namcap output',diagnostics.getvalue())
     def test_argument_lists_normalized_without_broadening(self):
         self.assertEqual(self.lint.canonical("rule ['b', 'a']"),"rule ['a', 'b']")
         self.assertNotEqual(self.lint.canonical("rule ['b', 'a', 'new']"),"rule ['a', 'b']")
